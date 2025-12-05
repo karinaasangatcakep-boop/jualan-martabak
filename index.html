@@ -1,0 +1,401 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Martabak Mini(e) Mine - Final Jreng</title>
+    <!-- Load Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Load Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap');
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #ffe4e6; /* Soft pink background */
+        }
+        /* Custom vibrant colors */
+        .vibrant-primary { background-color: #F05D5E; } /* Energetic Pink/Red */
+        .vibrant-accent { background-color: #FFC300; } /* Bright Yellow/Amber */
+        .card-shadow { box-shadow: 0 4px 12px rgba(240, 93, 94, 0.25); } /* Softer shadow */
+        .chat-container {
+            max-height: 250px; /* More compact chat */
+            overflow-y: auto;
+        }
+        /* Custom button styling */
+        .btn-primary {
+            background-color: #10B981; /* Emerald Green */
+            transition: transform 0.1s ease;
+        }
+        .btn-primary:active { transform: scale(0.95); }
+        .btn-accent {
+            background-color: #FFC300;
+            color: #374151;
+            font-weight: 700;
+            transition: transform 0.1s ease;
+        }
+        .btn-accent:active { transform: scale(0.95); }
+        
+        /* Sticky Cart for Desktop */
+        @media (min-width: 1024px) {
+            .sticky-lg { position: sticky; top: 1rem; }
+        }
+    </style>
+</head>
+<body>
+    <div id="app" class="min-h-screen flex flex-col items-center p-2 sm:p-4">
+        <!-- Header Compact -->
+        <header class="w-full max-w-2xl p-3 vibrant-primary rounded-xl card-shadow mb-3">
+            <h1 class="text-2xl sm:text-3xl font-extrabold text-white text-center drop-shadow-md flex items-center justify-center">
+                <span data-lucide="candy" class="w-6 h-6 mr-2 text-yellow-300"></span>
+                Martabak Mini(e) Mine
+                <span data-lucide="heart-handshake" class="w-6 h-6 ml-2 text-yellow-300"></span>
+            </h1>
+            <p class="text-center text-yellow-100 mt-1 font-semibold text-xs sm:text-sm">Si Manis Ngejreng yang Bikin Happy! 🥳</p>
+        </header>
+
+        <!-- Main Content Area Compact -->
+        <main id="main-content" class="w-full max-w-2xl flex-grow"></main>
+
+        <!-- Modals -->
+        <div id="modal-container" class="fixed inset-0 bg-black bg-opacity-60 hidden items-center justify-center z-50 p-4">
+            <div id="modal-content" class="bg-white p-5 rounded-xl card-shadow w-full max-w-sm transition-transform transform scale-100">
+                <!-- Konten Modal -->
+            </div>
+        </div>
+    </div>
+
+    <!-- Firebase and Logic -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        // Tambahkan signInWithCustomToken untuk autentikasi yang lebih kuat
+        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, doc, addDoc, updateDoc, onSnapshot, collection, serverTimestamp, setLogLevel } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        
+        // --- VARIABLE GLOBAL WAJIB DARI LINGKUNGAN CANVAS ---
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+        const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : null;
+        // Ambil token autentikasi yang disediakan oleh Canvas
+        const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null; 
+        
+        let app, db, auth, userId = null;
+        let isAuthReady = false; // Status apakah Firebase Auth sudah selesai diproses
+
+        let state = {
+            view: 'home',
+            cart: [],
+            buyerForm: { name: '', address: '', phone: '', paymentMethod: 'Dana', deliveryType: 'Delivery' },
+            orders: [],
+            reviews: [], 
+            chatHistory: [],
+            isLoading: false,
+        };
+
+        // --- DATA MENU (TETAP SAMA) ---
+        const MENU_ITEMS = [
+            { 
+                id: 1, 
+                name: 'Martabak Mini Coklat', 
+                price: 5000, 
+                desc: 'Coklat lumer parah! 🍫', 
+                img: 'https://allofresh.id/blog/wp-content/uploads/2023/08/cara-membuat-martabak-mini-2-768x512.jpg',
+                fallback: 'https://placehold.co/200x200/5D4037/ffffff?text=Coklat+Lumer' 
+            },
+            { 
+                id: 2, 
+                name: 'Martabak Mini Keju', 
+                price: 5000, 
+                desc: 'Keju segunung! 🧀', 
+                img: 'https://manfaatcara.com/wp-content/uploads/2020/03/af.jpg',
+                fallback: 'https://placehold.co/200x200/FBC02D/ffffff?text=Keju+Melimpah' 
+            },
+            { 
+                id: 3, 
+                name: 'Martabak Mini Coklat Keju', 
+                price: 5000, 
+                desc: 'Mix terbaik! 🌈', 
+                img: 'https://asset-2.tstatic.net/jambi/foto/bank/images/24082022-Martabak-Manis-Mini.jpg',
+                fallback: 'https://placehold.co/200x200/10B981/ffffff?text=Mix+Coklat+Keju' 
+            }
+        ];
+
+        const PAYMENT_OPTIONS = [
+            { value: 'Dana', label: 'Dana', detail: 'a/n Karina Divitri Rinaldi (085811457426)' },
+            { value: 'GOPAY', label: 'GoPay', detail: 'a/n M. Subqi Auladie (082280354522)' },
+            { value: 'ShopeePay', label: 'ShopeePay', detail: 'a/n Ukhti Runnisa (083861562544)' },
+            { value: 'COD', label: 'Cash on Delivery', detail: 'Bayar tunai saat sampai.' },
+        ];
+
+        // --- INIT FIREBASE & AUTHENTIKASI (DIPERKUAT) ---
+        async function initApp() {
+            if (!firebaseConfig) {
+                isAuthReady = true;
+                render();
+                return;
+            }
+            try {
+                setLogLevel('debug'); 
+                
+                app = initializeApp(firebaseConfig);
+                db = getFirestore(app);
+                auth = getAuth(app);
+                
+                // --- PENTING: Gunakan token kustom jika tersedia, jika tidak, sign in anonim ---
+                if (initialAuthToken) { 
+                    await signInWithCustomToken(auth, initialAuthToken);
+                } else { 
+                    await signInAnonymously(auth);
+                }
+                
+                // Gunakan onAuthStateChanged sebagai penanda bahwa proses login sudah selesai
+                onAuthStateChanged(auth, (user) => {
+                    userId = user ? user.uid : 'anon';
+                    isAuthReady = true; 
+                    console.log("Firebase Auth Ready. User ID:", userId);
+                    setupListeners();
+                    render();
+                });
+            } catch (e) { 
+                console.error("Firebase init error:", e);
+                // Jika ada error pada auth, tetap set ready agar UI muncul, tapi operasi DB akan gagal
+                isAuthReady = true; 
+                alertModal('Error Autentikasi', `Gagal login. Operasi database mungkin diblokir. Error: ${e.message}`);
+                render();
+            }
+        }
+
+        // --- LISTENERS FIRESTORE (TETAP SAMA) ---
+        function setupListeners() {
+            if (!db || !isAuthReady) return;
+            
+            // Reviews Collection (Data Publik)
+            const reviewQ = collection(db, `artifacts/${appId}/public/data/mini_martabak_reviews`);
+            onSnapshot(reviewQ, (snap) => {
+                let r = []; snap.forEach(d => r.push({id: d.id, ...d.data()}));
+                state.reviews = r.sort((a,b) => (b.timestamp?.seconds || 0) - (a.timestamp?.seconds || 0));
+                if (state.view === 'buyer') render(); 
+            }, (error) => { console.error("Review Snapshot Error:", error); });
+
+            // Orders Collection (Data Publik)
+            const orderQ = collection(db, `artifacts/${appId}/public/data/mini_martabak_orders`);
+            onSnapshot(orderQ, (snap) => {
+                let o = []; snap.forEach(d => o.push({id: d.id, ...d.data()}));
+                state.orders = o.sort((a,b) => (b.timestamp?.seconds || 0) - (a.timestamp?.seconds || 0));
+                if (state.view === 'seller_dashboard') render();
+            }, (error) => { console.error("Order Snapshot Error:", error); });
+        }
+
+        // --- LOGIC UTAMA (TETAP SAMA) ---
+        function setView(v) {
+            state.view = v;
+            if (v === 'buyer') {
+                state.cart = [];
+                state.buyerForm = { name: '', address: '', phone: '', paymentMethod: 'Dana', deliveryType: 'Delivery' };
+            }
+            render();
+        }
+
+        function addToCart(itemId) {
+            const item = MENU_ITEMS.find(i => i.id === itemId);
+            if (!item) return;
+            const ex = state.cart.find(i => i.id === itemId);
+            if (ex) ex.quantity++; else state.cart.push({...item, quantity: 1});
+            render();
+        }
+
+        function updateQuantity(id, chg) {
+            const item = state.cart.find(i => i.id === id);
+            if (item) {
+                item.quantity += chg;
+                if (item.quantity <= 0) state.cart = state.cart.filter(i => i.id !== id);
+            }
+            render();
+        }
+
+        function updateForm(f, v) { state.buyerForm[f] = v; }
+
+        function calculateTotal() { return state.cart.reduce((t, i) => t + (i.price * i.quantity), 0); }
+
+        function handleSellerLogin() {
+            const pwd = document.getElementById('seller-pwd').value;
+            if (pwd === "usahabertiga") setView('seller_dashboard');
+            else alertModal('Ups!', 'Password salah. Coba tanya tim "Usaha Bertiga"!');
+        }
+
+        // --- FUNGSI PESAN (DIPERKUAT KEMBALI UNTUK DIAGNOSIS ERROR) ---
+        async function handlePlaceOrder() {
+            // Pengecekan Kesiapan: Guard yang lebih ketat
+            if (!db || !isAuthReady || !userId || userId === 'anon') {
+                alertModal('Error Koneksi', 'Sistem belum sepenuhnya siap atau gagal login. Coba tunggu 5 detik lagi atau refresh halaman.');
+                console.error("FIREBASE ORDER ERROR: DB/Auth/User ID not ready. isAuthReady:", isAuthReady, "userId:", userId);
+                return;
+            }
+
+            if (!state.buyerForm.name || !state.buyerForm.address) return alertModal('Lengkapi Data', 'Nama dan Alamat wajib diisi ya! 📝');
+            const total = calculateTotal();
+            if (total === 0) return alertModal('Kosong?', 'Keranjangmu masih kosong nih!');
+
+            state.isLoading = true; render();
+            try {
+                const pay = PAYMENT_OPTIONS.find(p => p.value === state.buyerForm.paymentMethod);
+                
+                // Guard detail pembayaran
+                const paymentDetail = pay 
+                    ? `${pay.label}: ${pay.detail}` 
+                    : `Metode Pembayaran Tidak Dikenal: ${state.buyerForm.paymentMethod}`; 
+                
+                const orderData = {
+                    // Masukkan field secara eksplisit
+                    name: state.buyerForm.name,
+                    address: state.buyerForm.address,
+                    phone: state.buyerForm.phone,
+                    paymentMethod: state.buyerForm.paymentMethod,
+                    deliveryType: state.buyerForm.deliveryType,
+                    
+                    paymentDetail: paymentDetail, 
+                    items: state.cart.map(i => ({ name: i.name, quantity: i.quantity, price: i.price })),
+                    total: total,
+                    status: 'Baru',
+                    timestamp: serverTimestamp(),
+                    appId: appId,
+                    userId: userId 
+                };
+
+                await addDoc(collection(db, `artifacts/${appId}/public/data/mini_martabak_orders`), orderData);
+                
+                alertModal('Berhasil!', `Pesananmu sudah masuk! Total: Rp ${total.toLocaleString('id-ID')}. Ditunggu ya! 🛵`);
+                state.cart = []; 
+                setView('home'); 
+            } catch(e) { 
+                console.error("FIREBASE ORDER FAILED. Detail error:", e);
+                // Laporkan pesan error yang lebih jelas ke pengguna, termasuk kode error
+                const errorCode = e.code || 'UNKNOWN_ERROR';
+                const errorMessage = e.message || 'Tidak ada pesan error.';
+                alertModal('Gagal Pesan! 😵', `Gagal memproses pesanan. Error Code: ${errorCode}. Silakan coba ulangi.`); 
+            }
+            state.isLoading = false; render();
+        }
+
+        async function handleCompleteOrder(oid) {
+            if (!db || !isAuthReady || !userId) return alertModal('Error', 'Sistem belum siap.');
+            
+            state.isLoading = true; render();
+            try {
+                // Pastikan path ke Firestore benar
+                await updateDoc(doc(db, `artifacts/${appId}/public/data/mini_martabak_orders`, oid), {
+                    status: 'Selesai',
+                    completedAt: serverTimestamp()
+                });
+                alertModal('Horeee!', 'Selamat kamu telah menyelesaikan 1 pesanan! ✨'); 
+            } catch(e) { 
+                console.error("Complete order error:", e);
+                alertModal('Error', 'Gagal menandai pesanan selesai.'); 
+            }
+            state.isLoading = false; render();
+        }
+
+        // --- FUNGSI ULASAN (TETAP SAMA) ---
+        async function handleReviewSubmit() {
+            if (!db || !isAuthReady || !userId) {
+                alertModal('Error Koneksi', 'Sistem belum siap untuk menerima ulasan. Coba tunggu sebentar lagi.');
+                console.error("FIREBASE REVIEW ERROR: DB/Auth/User ID not ready. isAuthReady:", isAuthReady, "userId:", userId);
+                return;
+            }
+            
+            const txt = document.getElementById('rev-txt').value.trim();
+            const nm = document.getElementById('rev-nm').value.trim() || 'Anonim';
+            if(!txt) return;
+            state.isLoading = true; render();
+            try {
+                await addDoc(collection(db, `artifacts/${appId}/public/data/mini_martabak_reviews`), {
+                    text: txt, name: nm, timestamp: serverTimestamp(), appId, userId
+                });
+                document.getElementById('rev-txt').value = '';
+                document.getElementById('rev-nm').value = '';
+                alertModal('Makasih!', 'Ulasanmu sudah mejeng permanen! ✨');
+            } catch(e) {
+                console.error("FIREBASE REVIEW ERROR:", e);
+                alertModal('Error Ulasan!', `Gagal mengirim ulasan. Coba periksa koneksi internetmu. Error: ${e.message}`);
+            }
+            state.isLoading = false; render();
+        }
+
+        // --- CHATBOT DENGAN API GEMINI (TETAP SAMA) ---
+        async function handleChatbot() {
+            const chatInput = document.getElementById('chat-in');
+            const userQ = chatInput.value.trim();
+            if (!userQ) return;
+            chatInput.value = ''; 
+            
+            state.chatHistory.push({role:'user', text:userQ}); 
+            state.isLoading = true; 
+            render();
+            
+            try {
+                 const apiKey = "";
+                 const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`;
+                 
+                 const payload = {
+                     contents: [{parts:[{text:`User: ${userQ}. Bertindak sebagai Martabak Mini(e) Mine bot yang ramah dan lucu. Tugasmu adalah merekomendasikan *satu* dari 3 menu martabak mini (Coklat, Keju, atau Mix Coklat Keju) yang harganya 5rb. Jawab singkat, lucu, dan penuh emoji (maksimal 3 kalimat). Jangan pernah memberikan opsi lain selain 3 menu tersebut.`}]}]
+                 };
+
+                 const res = await fetch(url, { 
+                     method:'POST', 
+                     headers:{'Content-Type':'application/json'}, 
+                     body:JSON.stringify(payload) 
+                 });
+
+                 if (!res.ok) throw new Error(`API error: ${res.status}`);
+                 const d = await res.json();
+                 state.chatHistory.push({role:'model', text: d.candidates?.[0]?.content?.parts?.[0]?.text || "Maaf, bot lagi pusing 😵‍💫, coba lagi ya!"});
+            } catch(e) { 
+                console.error("Chatbot error:", e);
+                state.chatHistory.push({role:'model', text:"Bot lagi pusing 😵‍💫, coba lagi ya! 😥"}); 
+            }
+            state.isLoading = false; render();
+        }
+
+        // --- RENDER UI (TETAP SAMA) ---
+        function render() {
+            const root = document.getElementById('main-content');
+            
+            // Logika tampilkan loading saat Auth belum siap
+            if(!isAuthReady) {
+                return root.innerHTML = `
+                    <div class="text-center p-8 text-lg font-semibold text-gray-700 pt-16 bg-white rounded-xl shadow-lg border-t-4 border-vibrant-primary">
+                        <span data-lucide="loader-2" class="w-8 h-8 mx-auto mb-3 text-vibrant-primary animate-spin"></span>
+                        <p>Mengaktifkan koneksi ke dapur Martabak Mini... 🚀</p>
+                        <p class="text-sm font-normal text-gray-500 mt-2">Mohon tunggu sebentar ya!</p>
+                    </div>
+                `;
+            }
+            
+            // Tentukan apakah tombol pesan harus dinonaktifkan
+            const isOrderButtonDisabled = state.isLoading || !isAuthReady || !userId || calculateTotal() === 0; 
+            
+            let h = '';
+            // --- HOME VIEW ---
+            if (state.view === 'home') {
+                h = `
+                <div class="flex flex-col items-center justify-center text-center pt-8">
+                    <div class="vibrant-accent p-6 rounded-2xl shadow-xl w-full max-w-sm border-4 border-white">
+                        <h2 class="text-2xl font-bold mb-4 text-gray-800">Mau Jajan Apa Hari Ini? 🤤</h2>
+                        <div class="space-y-3">
+                            <button onclick="setView('buyer')" class="w-full vibrant-primary text-white font-bold py-3 px-4 rounded-xl shadow-lg hover:opacity-90 transition duration-300 flex items-center justify-center text-lg">
+                                <span data-lucide="popcorn" class="mr-3 w-6 h-6"></span> PEMBELI
+                            </button>
+                            <button onclick="setView('seller_login')" class="w-full bg-gray-700 text-white font-bold py-2 px-4 rounded-xl text-sm hover:bg-gray-600 transition duration-300">
+                                <span data-lucide="gem" class="mr-2 w-4 h-4"></span> PENJUAL (Admin Only)
+                            </button>
+                        </div>
+                    </div>
+                </div>`;
+            } 
+            // --- SELLER LOGIN ---
+            else if (state.view === 'seller_login') {
+                h = `
+                <div class="flex flex-col items-center pt-8">
+                    <div class="vibrant-primary p-6 rounded-2xl shadow-xl w-full max-w-sm border-4 border-white text-center">
+                        <h2 class="text-2xl font-bold mb-4 text-white">Login Admin 🔒</h2>
+                        <input type="password" id="seller-pwd" placeholder="Password..." class="w-full p-3 mb-4 rounded-lg text-base border-2 border-yellow-300 focus:ring-yellow-500 focus:border-yellow-500">
+                        <button onclick="handleSellerLogin()" class="w-full btn-accent p
